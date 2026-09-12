@@ -1,35 +1,71 @@
 # abilityxr.hu – OpenClaw Eszter legal pages
 
 Statikus oldalak a Google OAuth verifikációhoz (OAuth consent screen / Branding).
-Nincs build, nincs függőség, nincs külső erőforrás (nincs Google Fonts, nincs analytics) –
-három önálló HTML fájl.
+Nincs build step, nincs függőség, nincs külső erőforrás (nincs web font, nincs analytics).
 
-## Fájlok → URL-ek
+Deploy lánc: **GitHub → Coolify → Hetzner**, DNS a Rackhost-nál.
 
-| Fájl | Publikus URL |
-|---|---|
-| `openclaw-eszter/index.html` | https://www.abilityxr.hu/openclaw-eszter/ |
-| `openclaw-eszter/privacy/index.html` | https://www.abilityxr.hu/openclaw-eszter/privacy/ |
-| `openclaw-eszter/terms/index.html` | https://www.abilityxr.hu/openclaw-eszter/terms/ |
+## Repo felépítés
 
-A záró `/` miatt mindegyik mappa `index.html`-ként van kitéve – így bármelyik statikus
-hoston (Apache, nginx, Caddy, cPanel) a fenti URL-ek működnek átirányítás nélkül.
+```
+public/                             ← ez a doksigyökér, ez kerül kiszolgálásra
+├── index.html                      → /                        (neutrális, csak "abilityxr.hu")
+└── openclaw-eszter/
+    ├── index.html                  → /openclaw-eszter/
+    ├── privacy/index.html          → /openclaw-eszter/privacy/
+    └── terms/index.html            → /openclaw-eszter/terms/
+Dockerfile                          ← nginx:alpine, port 80
+nginx.conf                          ← /etc/nginx/conf.d/default.conf
+```
 
-## Telepítés (Rackhost / cPanel)
+A `README.md` és az `nginx.conf` **nincs** kiszolgálva (a `public/`-on kívül vannak) – 404-et adnak.
+Mappánként `index.html`, így a záró perjeles URL-ek rewrite nélkül működnek; a perjel nélküli
+`/openclaw-eszter` relatív `Location`-nal 301-el a perjeles változatra (`absolute_redirect off`,
+hogy a reverse proxy mögül ne a konténer belső host:port-ja szivárogjon ki).
 
-A domain jelenleg a Rackhost parkoló oldalát adja vissza, ami minden útvonalra
-200-at válaszol, de nem a lenti tartalmat. A fájlokat ki kell tenni a webtárhelyre:
+Healthcheck végpont: `/healthz` → `200 ok`. A `/` is 200, szóval a Coolify default
+healthcheckje is jó.
 
-1. FTP / File Manager → a webtár dokumentumgyökere (jellemzően `public_html/`).
-2. Töltsd fel az `openclaw-eszter/` mappát a teljes tartalmával (alkönyvtárakkal együtt).
-3. Ellenőrzés:
+## Coolify beállítás
+
+1. **New Resource → Public Repository** → `https://github.com/Sabolo100/abilityxr`, branch `main`.
+   (A repo public, szóval nem kell hozzá GitHub App integráció.)
+2. **Build Pack: Dockerfile** – a repo gyökerében lévő `Dockerfile`-t találja meg magától.
+3. **Ports Exposes: `80`** ← ezt át kell írni, a Coolify default `3000`, az nginx viszont 80-on hallgat.
+4. **Domains: `https://www.abilityxr.hu`** – a `https://` előtaggal add meg, ettől kér
+   Let's Encrypt certet a proxy.
+5. **Healthcheck path: `/healthz`** (opcionális).
+6. Deploy.
+
+A cert kiállítása HTTP-01 challenge-el megy, ehhez kell:
+- a DNS már a Hetzner szerverre mutasson (lásd lentebb) – **ezért a DNS-t érdemes előbb átállítani**,
+- a Hetzner cloud firewall és a szerver saját tűzfala engedje a **80** és **443** portot.
+
+## Rackhost DNS
+
+A Hetzner szerver **IPv4 címe** kell ide (nem a szerver ID-ja), sima A rekordként:
+
+| Típus | Név | Érték |
+|---|---|---|
+| A | `www` | a Hetzner szerver IPv4 címe |
+| AAAA | `www` | a Hetzner szerver IPv6 címe (opcionális) |
+
+- Ezzel a `www.abilityxr.hu` lekerül a Rackhost parkoló oldaláról a Hetzner szerverre.
+- Az apex (`abilityxr.hu`) marad a Rackhost-on, amíg nem nyúlsz hozzá. Ha azt is átvinnéd,
+  vedd fel az apexre is az A rekordot, és a Coolify-ban add meg második domainként
+  (vagy állíts be apex → www átirányítást).
+- **MX és a többi TXT rekordhoz ne nyúlj** – a levelezést nem érinti az A rekord csere.
+- A Google Search Console DNS TXT igazolás is a Rackhost DNS-be megy, és független attól,
+  hogy az A rekord hova mutat.
+
+## Ellenőrzés deploy után
 
 ```bash
 curl -sS -o /dev/null -w "%{http_code} %{url_effective}\n" -L https://www.abilityxr.hu/openclaw-eszter/ https://www.abilityxr.hu/openclaw-eszter/privacy/ https://www.abilityxr.hu/openclaw-eszter/terms/
 ```
 
-Mindháromnak `200`-at kell adnia, login nélkül, HTTPS-en, és a valódi tartalmat kell
-visszaadnia (nem a parkoló oldalt).
+Mindháromnak `200`-at kell adnia, valódi tartalommal (nem a Rackhost parkoló oldalával),
+érvényes HTTPS certtel, login nélkül.
 
 ## Google Cloud → OAuth consent screen → Branding
 
@@ -43,12 +79,22 @@ Authorized domain:             abilityxr.hu
 Developer contact:             eszterclaw@gmail.com
 ```
 
-App logo: **egyelőre nincs feltöltve** – nem szükséges, és extra verification-kört hozhat.
+App logo: **egyelőre nincs** – nem szükséges, és extra verification-kört hozhat.
 
-## Hátralévő lépések
+## Sorrend
 
-1. Fájlok kitéve, mindhárom URL 200 OK, publikus, login nélkül nyitható.
-2. `abilityxr.hu` igazolása Google Search Console-ban DNS TXT rekorddal
-   (ugyanazzal a Google-fiókkal, ami a Cloud projekt ownere).
-3. Branding mezők kitöltése a fenti értékekkel.
-4. Csak ezután: `Testing → In production` váltás.
+1. Rackhost DNS: `www` A rekord → Hetzner IP.
+2. Coolify: repo behúzása, Ports Exposes `80`, domain `https://www.abilityxr.hu`, deploy.
+3. A fenti `curl` mindhárom URL-re 200 OK, valódi tartalommal.
+4. `abilityxr.hu` igazolása Google Search Console-ban DNS TXT rekorddal (azzal a
+   Google-fiókkal, ami a Cloud projekt ownere).
+5. Branding mezők kitöltése.
+6. Csak ezután: `Testing → In production`.
+
+## Helyi teszt
+
+```bash
+docker build -t abilityxr . && docker run --rm -p 8080:80 abilityxr
+```
+
+Aztán http://localhost:8080/openclaw-eszter/
